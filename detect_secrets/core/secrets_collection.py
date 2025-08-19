@@ -14,6 +14,7 @@ from ..util.path import convert_local_os_path
 from .potential_secret import PotentialSecret
 from detect_secrets.settings import configure_settings_from_baseline
 from detect_secrets.settings import get_settings
+from .fileutils import iter_lines
 
 
 class PatchedFile:
@@ -60,21 +61,27 @@ class SecretsCollection:
 
         child_process_settings = get_settings().json()
 
+        # Normalize task paths once (root-joined + OS normalized)
+        tasks = [os.path.join(self.root, convert_local_os_path(f)) for f in filenames]
+
         with mp.Pool(
             processes=num_processors,
             initializer=configure_settings_from_baseline,
             initargs=(child_process_settings,),
         ) as p:
-            for secrets in p.imap_unordered(
-                _scan_file_and_serialize,
-                [os.path.join(self.root, filename) for filename in filenames],
-            ):
+            for secrets in p.imap_unordered(_scan_file_and_serialize, tasks):
                 for secret in secrets:
-                    self[os.path.relpath(secret.filename, self.root)].add(secret)
+                    rel = os.path.relpath(secret.filename, self.root)
+                    self[rel].add(secret)
+
 
     def scan_file(self, filename: str) -> None:
-        for secret in scan.scan_file(os.path.join(self.root, convert_local_os_path(filename))):
-            self[convert_local_os_path(filename)].add(secret)
+        # Keep storage key normalized (relative) but scan using absolute path.
+        abs_path = os.path.join(self.root, convert_local_os_path(filename))
+        storage_key = convert_local_os_path(filename)
+
+        for secret in scan.scan_file(abs_path):
+            self[storage_key].add(secret)
 
     def scan_diff(self, diff: str) -> None:
         """

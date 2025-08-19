@@ -24,6 +24,7 @@ from ..util.path import get_relative_path
 from .log import log
 from .plugins import Plugin
 from .potential_secret import PotentialSecret
+from .fileutils import iter_lines
 
 
 def get_files_to_scan(
@@ -252,12 +253,33 @@ def _scan_for_allowlisted_secrets_in_lines(
 
 def _get_lines_from_file(filename: str) -> Generator[List[str], None, None]:
     """
-    This attempts to get lines in a given file. If no more lines are needed, the caller
-    is responsible for breaking out of this loop.
+    Attempts to get lines in a given file. For `.json.gz`, stream-decompress using
+    iter_lines() and yield once (no eager transformers). For regular files, retain
+    the original transformer behavior.
 
     :raises: IOError
     :raises: FileNotFoundError
     """
+    lower = filename.lower()
+
+    # Fast path for large compressed JSON logs
+    if lower.endswith(".json.gz"):
+        log.info(f'Checking file: {filename} (json.gz)')
+        try:
+            # Read as text via streaming decompression (handled in iter_lines)
+            lines: List[str] = [ln for ln in iter_lines(filename)]
+        except UnicodeDecodeError:
+            # Ignore binary/undecodable content
+            return
+
+        if not lines:
+            return
+
+        yield lines
+        # No eager transformers for compressed logs; return early
+        return
+
+    # Original behavior for normal files (keeps transformers/eager transformers)
     with open(filename) as f:
         log.info(f'Checking file: {filename}')
 
@@ -278,6 +300,7 @@ def _get_lines_from_file(filename: str) -> Generator[List[str], None, None]:
             return
 
         yield lines
+
 
 
 def _get_lines_from_diff(diff: str) -> Generator[Tuple[str, List[Tuple[int, str]]], None, None]:
