@@ -127,6 +127,7 @@ class Settings:
     DEFAULT_FILTERS = {
         'detect_secrets.filters.common.is_invalid_file',
         'detect_secrets.filters.heuristic.is_non_text_file',
+        'detect_secrets.filters.ignore_hash_context.is_hash_context',
     }
 
     def __init__(self) -> None:

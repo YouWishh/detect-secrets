@@ -12,7 +12,9 @@ from typing import Set
 from ..core.potential_secret import PotentialSecret
 from .base import BasePlugin
 from detect_secrets.util.code_snippet import CodeSnippet
-
+# ---- tuned thresholds ----
+_HEX_LIMIT = 4.0
+_B64_LIMIT = 5.0
 
 class HighEntropyStringsPlugin(BasePlugin, metaclass=ABCMeta):
     """Base class for string pattern matching."""
@@ -137,33 +139,35 @@ class HighEntropyStringsPlugin(BasePlugin, metaclass=ABCMeta):
             self.regex = old_regex
 
 
-class Base64HighEntropyString(HighEntropyStringsPlugin):
-    """Scans for random-looking base64 encoded strings."""
-    secret_type = 'Base64 High Entropy String'
+class Base64HighEntropyString(RegexBasedDetector):
+    secret_type = 'High Entropy Base64 String'
+    denylist = (re.compile(r'(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])'),)
 
-    def __init__(self, limit: float = 4.5) -> None:
-        super().__init__(
-            charset=(
-                string.ascii_letters
-                + string.digits
-                + '+/'  # Regular base64
-                + '\\-_'  # Url-safe base64
-                + '='  # Padding
-            ),
-            limit=limit,
-        )
+    def analyze(self, string: str, line_num: int, filename: str):
+        for m in self.denylist[0].finditer(string):
+            s = m.group()
+            if len(s) < 24:
+                continue
+            entropy = calculate_shannon_entropy(s, charset=None)
+            if entropy >= _B64_LIMIT:
+                yield m.start(), s
 
 
-class HexHighEntropyString(HighEntropyStringsPlugin):
-    """Scans for random-looking hex encoded strings."""
+class HexHighEntropyString(RegexBasedDetector):
+    secret_type = 'High Entropy Hex String'
+    denylist = (re.compile(r'[0-9a-fA-F]{20,}'),)
 
-    secret_type = 'Hex High Entropy String'
-
-    def __init__(self, limit: float = 3.0) -> None:
-        super().__init__(
-            charset=string.hexdigits,
-            limit=limit,
-        )
+    def analyze(self, string: str, line_num: int, filename: str):
+        for m in self.denylist[0].finditer(string):
+            s = m.group()
+            # Ignore common SHA-1 / commit hashes (exactly 40 hex)
+            if len(s) == 40:
+                continue
+            entropy = calculate_shannon_entropy(
+                s, charset='0123456789abcdefABCDEF',
+            )
+            if entropy >= _HEX_LIMIT:
+                yield m.start(), s
 
     def calculate_shannon_entropy(self, data: str) -> float:
         """
